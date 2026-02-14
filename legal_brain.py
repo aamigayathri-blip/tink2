@@ -3,7 +3,8 @@ import faiss
 from sentence_transformers import SentenceTransformer
 
 # 1. Specialized Data: Sample of the new Bharatiya Nyaya Sanhita (BNS) 2023
-# In production, this would be loaded from a secure PostgreSQL/Document DB
+# In production, this would be loaded from a secure D
+
 BNS_DATA = [
     {
         "id": 1,
@@ -709,39 +710,65 @@ BNS_DATA = [
     }
 ]
 
-
 class LegalVectorStore:
     def __init__(self):
-        print("Loading AI Model (Sovereign/Local)...")
-        # Using a small, open-source model ensures data doesn't leave the server (Privacy)
-        self.model = SentenceTransformer('all-MiniLM-L6-v2') 
-        self.dimension = 384
-        self.index = faiss.IndexFlatL2(self.dimension)
-        self.metadata = []
-        self._build_index()
-
-    def _build_index(self):
-        print("Indexing BNS/BNSS Laws...")
-        documents = [item['text'] + " " + item['simplified'] for item in BNS_DATA]
-        embeddings = self.model.encode(documents)
-        self.index.add(np.array(embeddings).astype('float32'))
+        print("Initializing Legal Engine (Lazy Mode)...")
+        self.model = None
+        self.index = None
         self.metadata = BNS_DATA
+        self._indexed = False
+        self.dimension = None
+
+    def _initialize_model_and_index(self):
+        if self._indexed:
+            return
+
+        print("Loading AI Model...")
+        self.model = SentenceTransformer("all-MiniLM-L6-v2")
+
+        print("Preparing Documents...")
+        documents = [
+            item["text"] + " " + item["simplified"]
+            for item in self.metadata
+        ]
+
+        print("Generating Embeddings...")
+        embeddings = self.model.encode(
+            documents,
+            convert_to_numpy=True,
+            show_progress_bar=False
+        )
+
+        self.dimension = embeddings.shape[1]
+
+        print("Building FAISS Index...")
+        self.index = faiss.IndexFlatL2(self.dimension)
+        self.index.add(embeddings.astype("float32"))
+
+        self._indexed = True
         print("Legal Knowledge Base Ready.")
 
     def search(self, query: str, k=1):
-        """
-        Retrieves the most relevant law based on the user's natural language query.
-        """
-        query_vector = self.model.encode([query])
-        distances, indices = self.index.search(np.array(query_vector).astype('float32'), k)
-        
+        if not self._indexed:
+            self._initialize_model_and_index()
+
+        query_vector = self.model.encode(
+            [query],
+            convert_to_numpy=True
+        )
+
+        distances, indices = self.index.search(
+            query_vector.astype("float32"),
+            k
+        )
+
         results = []
-        for i in range(k):
-            idx = indices[0][i]
-            if idx < len(self.metadata):
+        for idx in indices[0]:
+            if 0 <= idx < len(self.metadata):
                 results.append(self.metadata[idx])
-        
+
         return results
 
-# Initialize the Brain
+
+# Initialize the brain
 legal_engine = LegalVectorStore()
